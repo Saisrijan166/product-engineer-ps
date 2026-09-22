@@ -1,0 +1,126 @@
+# The whole engine, one command.
+#
+#     docker compose up --build
+#
+# Four containers: PostgreSQL, the two services, and a controllable receiver to deliver to.
+# Everything binds to localhost only -- this is a demonstration, not a deployment.
+
+name: webhook-retry-engine
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-webhook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webhook}
+      # Both service databases are created by initdb.sql on first start.
+      POSTGRES_DB: postgres
+    volumes:
+      - ./initdb.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55433}:5432"
+    healthcheck:
+      # -d postgres, because pg_isready against the default database name would report ready
+      # before initdb.sql has finished creating the two the services need.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-webhook} -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  delivery-service:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        MODULE: webhook-delivery-service
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-demo}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/webhook_delivery
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-webhook}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-webhook}
+      WEBHOOK_DELIVERY_TARGET_URL: http://test-receiver:8082/receive
+    ports:
+      # A fixed port, because the demo UI runs in a browser and has to be told where this
+      # service is -- and a published *range* picks whichever port happens to be free, which
+      # nothing outside Docker can predict. To scale, add docker-compose.scale.yml, which drops
+      # this mapping; the ingest service reaches replicas by service name either way.
+      - "127.0.0.1:${DELIVERY_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      test-receiver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health/readiness"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  ingest-service:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        MODULE: webhook-ingest-service
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-demo}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/webhook_ingest
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-webhook}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-webhook}
+      # Compose load-balances this name across every delivery-service replica.
+      WEBHOOK_DELIVERY_SERVICE_BASE_URL: http://delivery-service:8081
+      # For the demo UI only: what a browser on the host can reach, which is not the same as the
+      # compose network names above.
+      UI_DELIVERY_BASE_URL: http://localhost:${DELIVERY_PORT:-8081}
+      UI_RECEIVER_BASE_URL: http://localhost:${RECEIVER_PORT:-8082}
+    ports:
+      - "127.0.0.1:${INGEST_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      delivery-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health/readiness"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  test-receiver:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        MODULE: webhook-test-receiver
+    environment:
+      # Needed for the same reason the other two have it: the demo UI's CORS config is
+      # profile-scoped, so without this the receiver control panel is blocked by the browser.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-demo}
+      SERVER_PORT: 8082
+    ports:
+      - "127.0.0.1:${RECEIVER_PORT:-8082}:8082"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/actuator/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  # Optional: `docker compose --profile tools up -d adminer` to browse the tables.
+  adminer:
+    image: adminer:5
+    profiles: ["tools"]
+    ports:
+      - "127.0.0.1:${ADMINER_PORT:-8090}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.caygnus.webhook</groupId>
+        <artifactId>webhook-retry-engine</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>webhook-test-receiver</artifactId>
+    <name>webhook-test-receiver</name>
+    <description>Controllable webhook target for the demo and acceptance tests. Not product code.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.caygnus.webhook</groupId>
+            <artifactId>webhook-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- Layered jar: Docker rebuilds only the application layer (ARCHITECTURE.md 14). -->
+                    <layers>
+                        <enabled>true</enabled>
+                    </layers>
+                    <!--
+                        Unlike the other two services, this one is also a test dependency of
+                        webhook-delivery-service, whose acceptance tests start the real receiver
+                        rather than a mock. A repackaged Boot jar keeps its classes under
+                        BOOT-INF/ and cannot be compiled against, so the executable artifact takes
+                        a classifier and the plain library jar stays the main one.
+
+                        Consequence for Docker (step 14): run
+                        webhook-test-receiver-<version>-boot.jar, not the unsuffixed jar.
+                    -->
+                    <classifier>boot</classifier>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

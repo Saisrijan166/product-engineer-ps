@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: webhook-test-receiver
+
+server:
+  port: ${SERVER_PORT:8082}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.caygnus.webhook: INFO
+
+# The mode the receiver starts in and returns to on POST /control/reset.
+receiver:
+  default-mode: ALWAYS_OK
+  default-status: 200
+  # Bounded so a long demo cannot grow the in-memory log without limit.
+  max-recorded-requests: 500
+
+---
+spring:
+  config:
+    activate:
+      on-profile: demo
+
+# Actuator endpoints have their own CORS configuration and are deliberately NOT covered by the
+# MVC CorsRegistry in DemoCorsConfig -- so the health dots in the demo UI need this too. Inside
+# the demo profile block, so the default profile grants nothing.
+management:
+  endpoints:
+    web:
+      cors:
+        allowed-origin-patterns: "http://localhost:*,http://127.0.0.1:*"
+        allowed-methods: GET
+
+logging:
+  level:
+    com.caygnus.webhook: DEBUG
+
+---
+# Random port: several test classes may hold a receiver at once.
+spring:
+  config:
+    activate:
+      on-profile: test
+
+server:
+  port: 0
+
+logging:
+  level:
+    com.caygnus.webhook: DEBUG

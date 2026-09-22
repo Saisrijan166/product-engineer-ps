@@ -1,0 +1,53 @@
+# One build for all three services, parameterised by MODULE.
+#
+# Multi-stage so the runtime image carries a JRE and a jar rather than a JDK, Maven and the whole
+# dependency cache. Layered so that a code change rebuilds one thin layer instead of re-shipping
+# every dependency: the layers below application/ change only when the POMs do.
+
+# ---------------------------------------------------------------- build
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /build
+
+# POMs first, on their own layer. Docker caches this, so dependency resolution is re-run only
+# when a POM actually changes -- not on every source edit.
+COPY pom.xml .
+COPY webhook-common/pom.xml webhook-common/
+COPY webhook-delivery-service/pom.xml webhook-delivery-service/
+COPY webhook-ingest-service/pom.xml webhook-ingest-service/
+COPY webhook-test-receiver/pom.xml webhook-test-receiver/
+RUN mvn -q -B dependency:go-offline -DskipTests
+
+COPY . .
+# Tests are deliberately not run here. They need a PostgreSQL that the build stage has no way to
+# reach, and `./mvnw verify` on the host is where they belong -- see docs/LOCAL_DEV.md.
+RUN mvn -q -B package -DskipTests
+
+# The one service this image is for. webhook-test-receiver's executable jar carries a `boot`
+# classifier because the delivery service's tests compile against its plain jar (ARCHITECTURE.md
+# N1), so the wildcard has to tolerate both names -- and must not match the `.jar.original`
+# that repackaging leaves behind.
+ARG MODULE
+RUN mkdir -p /build/staged \
+    && cp "$(ls /build/${MODULE}/target/${MODULE}-*.jar | grep -v '\.original$' | head -1)" /build/staged/app.jar \
+    && java -Djarmode=tools -jar /build/staged/app.jar extract --layers --destination /build/layers
+
+# -------------------------------------------------------------- runtime
+FROM eclipse-temurin:21-jre-alpine AS runtime
+WORKDIR /app
+
+# Non-root. Nothing here needs to write outside /tmp, so there is no reason to hand a webhook
+# client root in its own container.
+RUN addgroup -S webhook && adduser -S -G webhook webhook
+USER webhook
+
+# Least-changing layer first, so a code edit invalidates only the last COPY.
+COPY --from=build --chown=webhook:webhook /build/layers/dependencies/ ./
+COPY --from=build --chown=webhook:webhook /build/layers/spring-boot-loader/ ./
+COPY --from=build --chown=webhook:webhook /build/layers/snapshot-dependencies/ ./
+COPY --from=build --chown=webhook:webhook /build/layers/application/ ./
+
+# Containers get a cgroup memory limit, not a machine's worth of RAM. Without this the JVM sizes
+# its heap from the host and gets OOM-killed under a limit it never knew about.
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+
+ENTRYPOINT ["java", "-jar", "app.jar"]

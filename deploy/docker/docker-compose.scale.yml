@@ -1,0 +1,20 @@
+# Overlay for running more than one delivery-service.
+#
+#     docker compose -f deploy/docker/docker-compose.yml \
+#                    -f deploy/docker/docker-compose.scale.yml \
+#                    up -d --scale delivery-service=3
+#
+# It exists because two requirements genuinely conflict. A browser needs a predictable host port
+# to reach the delivery service on, which means publishing a fixed one; several replicas cannot
+# all bind the same fixed port. Rather than publish a range -- where the port Docker picks is
+# unpredictable and the UI can no longer be told where to look -- scaling drops the mapping
+# entirely. Replicas are still reachable from the ingest service by name, which is the only path
+# that matters for delivery, and `worker_id` in any attempt history still shows which instance
+# did the work.
+#
+# The demo UI's delivery panels stop working under this overlay, which is the trade: scaling is
+# a thing to observe in the data, not in the browser.
+
+services:
+  delivery-service:
+    ports: !reset []

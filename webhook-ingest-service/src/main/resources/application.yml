@@ -1,0 +1,101 @@
+spring:
+  application:
+    name: webhook-ingest-service
+  datasource:
+    url: ${INGEST_DB_URL:jdbc:postgresql://localhost:5432/webhook_ingest}
+    username: ${INGEST_DB_USER:webhook}
+    password: ${INGEST_DB_PASSWORD:webhook}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Flyway owns the schema. validate catches drift between the migration and the entities.
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  metrics:
+    tags:
+      # Every meter carries the service that emitted it, so one Prometheus can hold both.
+      service: ${spring.application.name}
+
+logging:
+  # Spring Boot's own Logstash-format structured logging: one line of JSON per event, MDC
+  # included automatically. See ARCHITECTURE.md 21 N3 for why this rather than the encoder
+  # dependency 11 names -- same format, no new dependency, no logback XML.
+  structured:
+    format:
+      console: logstash
+  level:
+    com.caygnus.webhook: INFO
+
+# Ingest and handoff policy -- ARCHITECTURE.md 6, 7.1.
+webhook:
+  ingest:
+    # Rejected above this size, before anything is persisted.
+    max-payload-bytes: 262144
+  delivery-service:
+    base-url: ${DELIVERY_SERVICE_URL:http://localhost:8081}
+    connect-timeout: 2s
+    read-timeout: 5s
+  # Browser-reachable addresses for the optional demo UI (see README). Not read by anything in
+  # the delivery path -- the address THIS service uses to reach delivery is delivery-service.base-url
+  # above, which inside Docker is a compose network name a browser cannot resolve.
+  ui:
+    delivery-base-url: ${UI_DELIVERY_BASE_URL:http://localhost:8081}
+    receiver-base-url: ${UI_RECEIVER_BASE_URL:http://localhost:8082}
+  outbox:
+    enabled: true
+    poll-interval: 500ms
+    batch-size: 20
+    # The dispatcher's own bounded retry, separate from the delivery attempt budget.
+    max-attempts: 10
+    base-delay: 1s
+    multiplier: 3
+    max-delay: 5m
+
+---
+spring:
+  config:
+    activate:
+      on-profile: demo
+
+webhook:
+  outbox:
+    poll-interval: 200ms
+
+---
+# Tests tick the dispatcher by name rather than waiting for a schedule (ARCHITECTURE.md 12.1).
+spring:
+  config:
+    activate:
+      on-profile: test
+
+webhook:
+  outbox:
+    # Ticked by name, never on a timer, so the dispatcher cannot advance between an action and
+    # its assertion.
+    enabled: false
+    # Base delay, multiplier and cap are inherited from the default profile deliberately (D4):
+    # the tests assert the schedule this service actually ships with rather than a shortened one
+    # invented for them. Stepping a mutable clock across those delays costs nothing.
+
+logging:
+  level:
+    com.caygnus.webhook: DEBUG

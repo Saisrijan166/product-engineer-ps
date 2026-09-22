@@ -1,0 +1,127 @@
+spring:
+  application:
+    name: webhook-delivery-service
+  datasource:
+    url: ${DELIVERY_DB_URL:jdbc:postgresql://localhost:5432/webhook_delivery}
+    username: ${DELIVERY_DB_USER:webhook}
+    password: ${DELIVERY_DB_PASSWORD:webhook}
+    hikari:
+      # Workers + scheduler + reaper + the read API, with slack. Sized above the worker pool on
+      # purpose: a worker that cannot get a connection to record its outcome is a lost attempt.
+      maximum-pool-size: 12
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Flyway owns the schema. validate catches drift between the migration and the entities.
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  metrics:
+    tags:
+      # Every meter carries the service that emitted it, so one Prometheus can hold both.
+      service: ${spring.application.name}
+
+logging:
+  # Spring Boot's own Logstash-format structured logging: one line of JSON per event, MDC
+  # included automatically. See ARCHITECTURE.md 21 N3 for why this rather than the encoder
+  # dependency 11 names -- same format, no new dependency, no logback XML.
+  structured:
+    format:
+      console: logstash
+  level:
+    com.caygnus.webhook: INFO
+
+# Delivery and retry policy -- ARCHITECTURE.md 9.1/9.2, 5.4, 10.
+webhook:
+  delivery:
+    # The one configurable webhook endpoint (problem statement, required behaviour 2).
+    target-url: ${WEBHOOK_TARGET_URL:http://localhost:8082/receive}
+    connect-timeout: 2s
+    response-timeout: 5s
+    # Bounded concurrent attempts per instance; the queue itself lives in PostgreSQL, not in RAM.
+    max-concurrent-attempts: 8
+  retry:
+    max-attempts: 5
+    base-delay: 5s
+    multiplier: 5
+    max-delay: 10m
+    jitter-factor: 0.2
+  scheduler:
+    enabled: true
+    poll-interval: 200ms
+    # Lease = response-timeout + slack, so a reaped attempt must already have timed out.
+    lease-slack: 10s
+  reaper:
+    enabled: true
+    interval: 10s
+    batch-size: 100
+  endpoint-health:
+    failure-threshold: 10
+    open-for: 30s
+
+---
+# Video-friendly backoff: 1s -> 2s -> 4s -> 8s, about 15s end to end.
+spring:
+  config:
+    activate:
+      on-profile: demo
+
+# Actuator endpoints have their own CORS configuration and are deliberately NOT covered by the
+# MVC CorsRegistry in DemoCorsConfig -- so the health dots in the demo UI need this too. Inside
+# the demo profile block, so the default profile grants nothing.
+management:
+  endpoints:
+    web:
+      cors:
+        allowed-origin-patterns: "http://localhost:*,http://127.0.0.1:*"
+        allowed-methods: GET
+
+webhook:
+  retry:
+    base-delay: 1s
+    multiplier: 2
+    max-delay: 30s
+
+---
+# Tests drive time and scheduling themselves (ARCHITECTURE.md 12.1): the clock is mutable, the
+# scheduler and reaper are ticked by name, and the executor runs on the calling thread. Backoff is
+# zero so a test advances the clock only when it wants to prove that backoff was applied.
+spring:
+  config:
+    activate:
+      on-profile: test
+
+webhook:
+  retry:
+    # Base delay, multiplier and cap are inherited from the default profile deliberately: the
+    # acceptance tests assert the schedule this service actually ships with (5s, 25s, 125s, 600s)
+    # rather than a shortened one invented for them. Advancing a mutable clock across those delays
+    # costs nothing, so there is no reason to test a different policy from the documented one.
+    # Only jitter is switched off, so the assertions can be exact.
+    jitter-factor: 0
+  scheduler:
+    enabled: false
+  reaper:
+    enabled: false
+
+logging:
+  level:
+    com.caygnus.webhook: DEBUG

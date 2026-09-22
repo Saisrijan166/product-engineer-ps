@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.caygnus.webhook</groupId>
+        <artifactId>webhook-retry-engine</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>webhook-common</artifactId>
+    <name>webhook-common</name>
+    <description>Wire contracts and shared enums. No entities, no services, no Spring.</description>
+
+    <!--
+        One dependency, and it is a specification API rather than a framework: the constraints on a
+        request are part of the contract, so both sides of the wire enforce the same ones from the
+        same declaration. Nothing else belongs here. This module is shared by two services that own
+        separate databases, and giving it a framework or a persistence dependency is how a
+        shared-nothing boundary quietly turns into a shared domain.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

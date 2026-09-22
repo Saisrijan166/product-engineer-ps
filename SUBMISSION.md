@@ -7,6 +7,7 @@
 - **GitHub:** https://github.com/Saisrijan166/product-engineer-ps.git
 - **Selected problem:** Problem 2 — Webhook Retry Engine
 - **Demo video:** https://drive.google.com/file/d/1NkIm9qpeEIggdO3svRv80sT3trMHlbMY/view?usp=sharing
+- **Resume:** https://drive.google.com/file/d/1Un-gWtDm2OMkyqtjHXJGWYV2HPdJFCqS/view?usp=drive_link
 
 ---
 
